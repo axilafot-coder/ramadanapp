@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ramadan Pro Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.284.0/umd/lucide.min.js"></script>
+    <style>
+        body { background-color: #020617; color: white; font-family: sans-serif; margin: 0; }
+        ::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // 1. YOUR FIREBASE CONFIG HAS BEEN UPDATED
+        const firebaseConfig = {
+            apiKey: "AIzaSyBA-0sR3quTqAdzNNpAK8CCHw19jDi2je4",
+            authDomain: "ramadanapp-13ef8.firebaseapp.com",
+            projectId: "ramadanapp-13ef8",
+            storageBucket: "ramadanapp-13ef8.firebasestorage.app",
+            messagingSenderId: "858912691110",
+            appId: "1:858912691110:web:2e43b35ec9164db2a13567",
+            measurementId: "G-FV3FJWG9VM"
+        };
+
+        const { useState, useEffect, useMemo } = React;
+
+        const PRAYERS = [
+            { id: 'fajr', name: 'Fajr', target: 2 },
+            { id: 'dhuhr', name: 'Dhuhr', target: 4 },
+            { id: 'asr', name: 'Asr', target: 2 },
+            { id: 'maghrib', name: 'Maghrib', target: 2 },
+            { id: 'isha', name: 'Isha', target: 2 },
+        ];
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('log');
+            const [selectedDay, setSelectedDay] = useState(1);
+            const [profile, setProfile] = useState({ name: '', gender: '' });
+            const [showOnboarding, setShowOnboarding] = useState(true);
+
+            const Icon = ({ name, ...props }) => {
+                const LucideIcon = lucide[name];
+                return LucideIcon ? <LucideIcon {...props} /> : null;
+            };
+
+            if (showOnboarding) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-950">
+                        <div className="w-full max-w-sm space-y-6 bg-slate-900 p-8 rounded-[32px] border border-slate-800">
+                            <div className="text-center">
+                                <h2 className="text-2xl font-black italic">RAMADAN <span className="text-emerald-500">PRO</span></h2>
+                                <p className="text-slate-500 text-[10px] mt-2 font-bold uppercase">Encouraging Sunnah Habits</p>
+                            </div>
+
+                            <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl">
+                                <p className="text-[10px] text-amber-200/80 leading-relaxed font-medium">
+                                    <span className="font-black text-amber-500 block mb-1 underline">SPIRITUAL DISCLAIMER</span>
+                                    This app is for motivation to follow the Sunnah. It does not reflect real divine rewards (Thawab).
+                                </p>
+                            </div>
+
+                            <input 
+                                type="text" placeholder="Name" 
+                                className="w-full bg-slate-800 border-2 border-slate-700 rounded-xl p-4 outline-none focus:border-emerald-500"
+                                onChange={(e) => setProfile({...profile, name: e.target.value})}
+                            />
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <button onClick={() => setProfile({...profile, gender: 'male'})} className={`p-4 rounded-xl border-2 font-bold ${profile.gender === 'male' ? 'bg-emerald-500 border-emerald-400 text-slate-950' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>Brother</button>
+                                <button onClick={() => setProfile({...profile, gender: 'female'})} className={`p-4 rounded-xl border-2 font-bold ${profile.gender === 'female' ? 'bg-emerald-500 border-emerald-400 text-slate-950' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>Sister</button>
+                            </div>
+
+                            <button 
+                                onClick={() => setShowOnboarding(false)}
+                                disabled={!profile.name || !profile.gender}
+                                className="w-full bg-white text-slate-950 font-black p-4 rounded-xl uppercase disabled:opacity-30"
+                            >
+                                Enter Tracker
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-slate-950 pb-24">
+                    <header className="p-4 flex justify-between items-center border-b border-slate-900 sticky top-0 bg-slate-950/80 backdrop-blur-md">
+                        <h1 className="font-black italic">RAMADAN <span className="text-emerald-500">PRO</span></h1>
+                        <div className="bg-emerald-500 text-slate-950 px-3 py-1 rounded-full text-[10px] font-black">DAY {selectedDay}</div>
+                    </header>
+
+                    <main className="p-4 max-w-md mx-auto space-y-4">
+                        <div className="flex items-center justify-between bg-slate-900 rounded-xl p-2 border border-slate-800">
+                            <button onClick={() => setSelectedDay(Math.max(1, selectedDay - 1))}><Icon name="ChevronLeft" /></button>
+                            <span className="text-xs font-black uppercase tracking-widest">Ramadan Day {selectedDay}</span>
+                            <button onClick={() => setSelectedDay(Math.min(30, selectedDay + 1))}><Icon name="ChevronRight" /></button>
+                        </div>
+
+                        {PRAYERS.map(p => (
+                            <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center text-slate-500">
+                                        <Icon name="CheckCircle2" />
+                                    </div>
+                                    <span className="font-bold">{p.name}</span>
+                                </div>
+                                <button className="text-[10px] font-black bg-slate-800 px-3 py-2 rounded-lg text-slate-500 uppercase">
+                                    {profile.gender === 'female' ? 'At Home' : 'Masjid'}
+                                </button>
+                            </div>
+                        ))}
+                    </main>
+
+                    <nav className="fixed bottom-0 left-0 right-0 bg-slate-950 border-t border-slate-900 p-4 flex justify-around">
+                        <Icon name="BarChart3" className={activeTab === 'dashboard' ? 'text-emerald-500' : 'text-slate-600'} onClick={() => setActiveTab('dashboard')} />
+                        <Icon name="CheckCircle2" className={activeTab === 'log' ? 'text-emerald-500' : 'text-slate-600'} onClick={() => setActiveTab('log')} />
+                        <Icon name="History" className={activeTab === 'history' ? 'text-emerald-500' : 'text-slate-600'} onClick={() => setActiveTab('history')} />
+                    </nav>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
