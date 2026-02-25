@@ -13,24 +13,26 @@ import {
   Building2, Users, Target, ScrollText, Lock, User as UserIcon, LogOut, Info
 } from 'lucide-react';
 
-// Your web app's Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyBA-0sR3quTqAdzNNpAK8CCHw19jDi2je4",
-  authDomain: "ramadanapp-13ef8.firebaseapp.com",
-  projectId: "ramadanapp-13ef8",
-  storageBucket: "ramadanapp-13ef8.firebasestorage.app",
-  messagingSenderId: "858912691110",
-  appId: "1:858912691110:web:2e43b35ec9164db2a13567",
-  measurementId: "G-FV3FJWG9VM"
-};
+// Use environment config if available, fallback to provided config
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : {
+      apiKey: "AIzaSyBA-0sR3quTqAdzNNpAK8CCHw19jDi2je4",
+      authDomain: "ramadanapp-13ef8.firebaseapp.com",
+      projectId: "ramadanapp-13ef8",
+      storageBucket: "ramadanapp-13ef8.firebasestorage.app",
+      messagingSenderId: "858912691110",
+      appId: "1:858912691110:web:2e43b35ec9164db2a13567",
+      measurementId: "G-FV3FJWG9VM"
+    };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ramadan-pro-auth-v1';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'ramadan-pro-final';
 
-// Initialize Analytics (Conditional for environment compatibility)
+// Initialize Analytics Safely
 isSupported().then(supported => {
   if (supported) getAnalytics(app);
 });
@@ -86,6 +88,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
+  // Auth Handling with correct precedence and async/await
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -94,9 +97,14 @@ export default function App() {
         } else {
           await signInAnonymously(auth);
         }
-      } catch (e) { console.error("Auth error", e); }
+      } catch (e) { 
+        console.error("Auth initialization error", e);
+        // Fallback to anonymous if custom token fails
+        try { await signInAnonymously(auth); } catch(err) {}
+      }
     };
     initAuth();
+    
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setIsAuthLoading(false);
@@ -116,9 +124,10 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !profile?.pin) return;
-
-    // RULE 1: Even segments: artifacts (1) / appId (2) / public (3) / data (4) / logs (5) / user_pin (6)
+    
+    // GUARD: Ensure all Firestore operations follow Rule 1 paths
     const dataRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_logs', `user_${profile.pin}`);
+    
     const unsubscribeData = onSnapshot(dataRef, (s) => {
       if (s.exists()) setAllData(s.data());
       setLoading(false);
@@ -126,58 +135,54 @@ export default function App() {
       console.error("Firestore Error:", err);
       setLoading(false);
     });
-    
     return () => unsubscribeData();
   }, [user, profile]);
 
   const handleRegister = async () => {
-    if (pinInput.length !== 6 || isNaN(pinInput)) {
-      setError('PIN must be 6 digits');
-      return;
-    }
-    if (!regName) {
-      setError('Please enter your name');
-      return;
-    }
-
+    if (pinInput.length !== 6) { setError('PIN must be 6 digits'); return; }
+    if (!regName) { setError('Please enter your name'); return; }
     setLoading(true);
-    // Path fixed for even segments
-    const pinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', `profile_${pinInput}`);
-    const check = await getDoc(pinDocRef);
     
-    if (check.exists()) {
-      setError('This PIN is already taken. Try another.');
+    try {
+      const pinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', `profile_${pinInput}`);
+      const check = await getDoc(pinDocRef);
+      if (check.exists()) {
+        setError('This PIN is already taken.');
+        setLoading(false);
+        return;
+      }
+      const newProfile = { name: regName, gender: regGender, pin: pinInput };
+      await setDoc(pinDocRef, newProfile);
+      setProfile(newProfile);
+      localStorage.setItem('ramadan_pro_pin', pinInput);
+    } catch (err) {
+      setError('Registration failed. Please try again.');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const newProfile = { name: regName, gender: regGender, pin: pinInput };
-    await setDoc(pinDocRef, newProfile);
-    setProfile(newProfile);
-    localStorage.setItem('ramadan_pro_pin', pinInput);
-    setLoading(false);
   };
 
   const handleLogin = async (providedPin) => {
     const pinToUse = providedPin || pinInput;
-    if (pinToUse.length !== 6) {
-      setError('Enter 6-digit PIN');
-      return;
-    }
-
+    if (pinToUse.length !== 6) { setError('Enter 6-digit PIN'); return; }
     setLoading(true);
-    const pinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', `profile_${pinToUse}`);
-    const snap = await getDoc(pinDocRef);
     
-    if (snap.exists()) {
-      setProfile(snap.data());
-      localStorage.setItem('ramadan_pro_pin', pinToUse);
-      setError('');
-    } else {
-      setError('Invalid PIN or Profile not found');
-      localStorage.removeItem('ramadan_pro_pin');
+    try {
+      const pinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', `profile_${pinToUse}`);
+      const snap = await getDoc(pinDocRef);
+      if (snap.exists()) {
+        setProfile(snap.data());
+        localStorage.setItem('ramadan_pro_pin', pinToUse);
+        setError('');
+      } else {
+        setError('Invalid PIN');
+        localStorage.removeItem('ramadan_pro_pin');
+      }
+    } catch (err) {
+      setError('Login failed. Please check connection.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleLogout = () => {
@@ -194,10 +199,11 @@ export default function App() {
     const newDayData = { ...dayExisting, ...updates };
     const newData = { ...allData, [day]: newDayData };
     setAllData(newData);
+    
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'user_logs', `user_${profile.pin}`), newData);
     } catch (err) {
-      console.error("Save Error:", err);
+      console.error("Failed to save data", err);
     } finally {
       setTimeout(() => setIsSaving(false), 300); 
     }
@@ -210,7 +216,6 @@ export default function App() {
       const p = (data.prayers && data.prayers[pDef.id]) || INITIAL_DAY_DATA.prayers[pDef.id];
       if (p.completed) score += 50;
       score += (p.rawatib || 0) * 10;
-      
       if (profile?.gender === 'female') {
         if (p.group) score += 50; 
       } else {
@@ -218,7 +223,6 @@ export default function App() {
         if (p.group) score += 25;
       }
     });
-
     if (data.surahWaqiya) score += 50;
     if (data.surahMulk) score += 50;
     if (data.surahYaseen) score += 50;
@@ -234,379 +238,155 @@ export default function App() {
   };
 
   const currentDayData = allData[selectedDay] || INITIAL_DAY_DATA;
-  const currentDayScore = useMemo(() => calculateDayScore(currentDayData), [currentDayData, profile]);
-  
-  const totalJuzFinished = useMemo(() => {
-    return Object.values(allData).reduce((acc, curr) => acc + (Number(curr.quranJuz) || 0), 0);
-  }, [allData]);
-
-  const juzProgressPercent = Math.min(100, (totalJuzFinished / QURAN_TOTAL_JUZ) * 100);
+  const currentDayScore = calculateDayScore(currentDayData);
+  const totalJuzFinished = Object.values(allData).reduce((acc, curr) => acc + (Number(curr.quranJuz) || 0), 0);
   const scoreProgressPercent = Math.min(100, (currentDayScore / DAILY_SCORE_TARGET) * 100);
 
-  const getScoreColor = (percent) => {
-    if (percent < 30) return 'bg-red-500';
-    if (percent < 70) return 'bg-yellow-500';
-    return 'bg-green-500';
-  };
+  if (isAuthLoading || (user && loading && profile)) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <Loader2 size={32} className="animate-spin text-emerald-500 opacity-50" />
+      </div>
+    );
+  }
 
-  if (isAuthLoading || (user && loading && profile)) return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-      <Loader2 size={32} className="animate-spin text-emerald-500 opacity-50" />
-    </div>
-  );
-
-  if (!profile) return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-8 animate-in fade-in zoom-in duration-500">
-        <div className="text-center">
-          <h1 className="text-4xl font-black italic tracking-tighter mb-2">RAMADAN <span className="text-emerald-500">PRO</span></h1>
-          <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.3em]">Spiritual Growth Tracker</p>
-        </div>
-
-        <div className="bg-slate-900/50 border border-white/5 p-6 rounded-[32px] space-y-4">
-          <div className="flex bg-slate-950 p-1 rounded-2xl border border-white/5">
-            <button 
-              onClick={() => { setAuthMode('login'); setError(''); }}
-              className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${authMode === 'login' ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}
-            >Login</button>
-            <button 
-              onClick={() => { setAuthMode('register'); setError(''); }}
-              className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${authMode === 'register' ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}
-            >Register</button>
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center px-6">
+        <div className="w-full max-w-sm space-y-8">
+          <div className="text-center">
+            <h1 className="text-4xl font-black italic tracking-tighter mb-2">RAMADAN <span className="text-emerald-500">PRO</span></h1>
+            <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.3em]">Spiritual Growth Tracker</p>
           </div>
-
-          {authMode === 'register' && (
-            <div className="space-y-3">
-              <div className="relative">
-                <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={16} />
-                <input 
-                  type="text" placeholder="Full Name" 
-                  className="w-full bg-slate-950 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-sm focus:border-emerald-500 outline-none transition-all"
-                  value={regName} onChange={e => setRegName(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => setRegGender('male')}
-                  className={`flex-1 py-3 rounded-2xl border text-[10px] font-black uppercase transition-all ${regGender === 'male' ? 'bg-blue-500 border-blue-400 text-white' : 'bg-slate-950 border-white/5 text-slate-600'}`}
-                >Male</button>
-                <button 
-                  onClick={() => setRegGender('female')}
-                  className={`flex-1 py-3 rounded-2xl border text-[10px] font-black uppercase transition-all ${regGender === 'female' ? 'bg-pink-500 border-pink-400 text-white' : 'bg-slate-950 border-white/5 text-slate-600'}`}
-                >Female</button>
-              </div>
+          <div className="bg-slate-900/50 border border-white/5 p-6 rounded-[32px] space-y-4">
+            <div className="flex bg-slate-950 p-1 rounded-2xl border border-white/5">
+              <button onClick={() => setAuthMode('login')} className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${authMode === 'login' ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}>Login</button>
+              <button onClick={() => setAuthMode('register')} className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${authMode === 'register' ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}>Register</button>
             </div>
-          )}
-
-          <div className="relative">
-            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={16} />
-            <input 
-              type="password" maxLength={6} placeholder="6-Digit Login PIN" 
-              className="w-full bg-slate-950 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-sm tracking-[1em] focus:border-emerald-500 outline-none transition-all"
-              value={pinInput} onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))}
-            />
+            {authMode === 'register' && (
+              <div className="space-y-3">
+                <input type="text" placeholder="Full Name" className="w-full bg-slate-950 border border-white/5 rounded-2xl py-3 px-4 text-sm" value={regName} onChange={e => setRegName(e.target.value)} />
+                <div className="flex gap-2">
+                  <button onClick={() => setRegGender('male')} className={`flex-1 py-3 rounded-2xl border text-[10px] font-black uppercase ${regGender === 'male' ? 'bg-blue-500' : 'bg-slate-950'}`}>Male</button>
+                  <button onClick={() => setRegGender('female')} className={`flex-1 py-3 rounded-2xl border text-[10px] font-black uppercase ${regGender === 'female' ? 'bg-pink-500' : 'bg-slate-950'}`}>Female</button>
+                </div>
+              </div>
+            )}
+            <input type="password" placeholder="6-Digit PIN" className="w-full bg-slate-950 border border-white/5 rounded-2xl py-3 px-4 text-sm tracking-[1em] text-center" value={pinInput} onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))} />
+            {error && <p className="text-red-500 text-[10px] font-bold text-center uppercase">{error}</p>}
+            <button onClick={authMode === 'login' ? () => handleLogin() : handleRegister} className="w-full bg-emerald-500 text-slate-950 py-4 rounded-2xl font-black uppercase text-xs">Continue</button>
           </div>
-
-          {error && <p className="text-red-500 text-[10px] font-bold text-center uppercase tracking-tighter">{error}</p>}
-
-          <button 
-            onClick={authMode === 'login' ? () => handleLogin() : handleRegister}
-            className="w-full bg-emerald-500 text-slate-950 py-4 rounded-2xl font-black uppercase text-xs shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
-          >
-            {authMode === 'login' ? 'Access Profile' : 'Create Profile'}
-          </button>
-        </div>
-
-        <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-2xl flex gap-3">
-          <Info className="text-emerald-500 shrink-0" size={16} />
-          <p className="text-[10px] text-slate-400 leading-relaxed italic">
-            <span className="text-emerald-500 font-bold uppercase not-italic">Disclaimer:</span> The points system is designed solely to encourage consistent practice of the Sunnah.
-          </p>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   return (
-    <div className="min-h-[100dvh] bg-slate-950 text-slate-100 font-sans pb-32 select-none overflow-x-hidden">
+    <div className="min-h-[100dvh] bg-slate-950 text-slate-100 pb-32 overflow-x-hidden">
       <header className="px-5 py-4 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-xl z-50 border-b border-white/5">
-        <div className="flex flex-col">
-          <h1 className="text-lg font-black italic tracking-tighter uppercase">{profile?.name || 'User'} <span className="text-emerald-500">PRO</span></h1>
-          <div className="flex items-center gap-2">
-            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{profile?.gender} Mode</span>
-            <button onClick={handleLogout} className="text-[9px] text-red-500 font-black uppercase flex items-center gap-1 hover:opacity-70 transition-all">
-              <LogOut size={8} /> Logout
-            </button>
-          </div>
+        <div>
+          <h1 className="text-lg font-black italic uppercase">{profile.name} <span className="text-emerald-500">PRO</span></h1>
+          <button onClick={handleLogout} className="text-[9px] text-red-500 font-black uppercase">Logout</button>
         </div>
-        <div className="flex items-center gap-3">
-            {isSaving && <div className="text-[9px] font-bold text-emerald-500 animate-pulse uppercase tracking-tighter">Saving</div>}
-            <div className="bg-slate-900 border border-white/10 px-3 py-1.5 rounded-full">
-                <span className="text-[9px] font-black uppercase text-emerald-500 tracking-tighter">Day {selectedDay}</span>
-            </div>
+        <div className="bg-slate-900 border border-white/10 px-3 py-1.5 rounded-full">
+            <span className="text-[9px] font-black uppercase text-emerald-500">Day {selectedDay}</span>
         </div>
       </header>
 
       <main className="px-4 py-4 max-w-md mx-auto space-y-4">
         {activeTab === 'log' && (
-          <div className="space-y-4 animate-in fade-in duration-300">
+          <div className="space-y-4">
             <section className="bg-slate-900/40 p-4 rounded-[24px] border border-white/5 space-y-2">
-                <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-1.5">
-                        <Target size={12} className="text-white opacity-50" />
-                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Points Goal</span>
-                    </div>
-                    <span className="text-[10px] font-black">{Math.round(currentDayScore)} / {DAILY_SCORE_TARGET}</span>
+                <div className="flex justify-between items-center text-[10px] font-black uppercase text-slate-500">
+                    <span>Points Goal</span>
+                    <span>{Math.round(currentDayScore)} / {DAILY_SCORE_TARGET}</span>
                 </div>
                 <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className={`h-full transition-all duration-700 ${getScoreColor(scoreProgressPercent)}`} style={{ width: `${scoreProgressPercent}%` }} />
+                    <div className="h-full bg-emerald-500 transition-all duration-700" style={{ width: `${scoreProgressPercent}%` }} />
                 </div>
             </section>
 
             <div className="flex items-center justify-between bg-slate-900/40 p-2 rounded-2xl border border-white/5">
-                <button onClick={() => setSelectedDay(d => Math.max(1, d-1))} className="p-2 bg-slate-800/50 rounded-xl active:scale-90"><ChevronLeft size={16} /></button>
-                <div className="text-center">
-                  <span className="text-[14px] font-black italic">Day {selectedDay} Tracking</span>
-                </div>
-                <button onClick={() => setSelectedDay(d => Math.min(30, d+1))} className="p-2 bg-slate-800/50 rounded-xl active:scale-90"><ChevronRight size={16} /></button>
+                <button onClick={() => setSelectedDay(d => Math.max(1, d-1))} className="p-2 bg-slate-800/50 rounded-xl"><ChevronLeft size={16} /></button>
+                <span className="text-[14px] font-black italic uppercase">Day {selectedDay}</span>
+                <button onClick={() => setSelectedDay(d => Math.min(30, d+1))} className="p-2 bg-slate-800/50 rounded-xl"><ChevronRight size={16} /></button>
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-[9px] font-black uppercase text-slate-600 tracking-widest pl-2">Mandatory Salath</h3>
-              {PRAYERS.map(p => {
-                const d = currentDayData.prayers?.[p.id] || INITIAL_DAY_DATA.prayers[p.id];
-                return (
-                  <div key={p.id} className="bg-slate-900/50 border border-white/5 rounded-[20px] p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <button 
-                        onClick={() => {
-                          const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                          ps[p.id] = { ...d, completed: !d.completed };
-                          updateDayData(selectedDay, { prayers: ps });
-                        }} 
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${d.completed ? 'bg-emerald-500 text-slate-950 shadow-lg' : 'bg-slate-800 text-slate-700'}`}
-                      >
-                          <CheckCircle2 size={20} />
-                      </button>
-
-                      <div className="flex-grow flex items-center justify-between px-1">
-                          <div>
-                            <span className={`font-black text-[12px] uppercase block tracking-tighter ${d.completed ? 'text-white' : 'text-slate-500'}`}>{p.name}</span>
-                            <div className="flex items-center gap-2">
-                                <span className="text-[8px] font-bold text-slate-500 uppercase whitespace-nowrap">Rawatib {d.rawatib}/{p.target}</span>
-                                <div className="flex items-center gap-1 bg-slate-800/80 px-1.5 py-0.5 rounded-lg border border-white/5">
-                                    <button onClick={() => {
-                                        const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                        ps[p.id] = { ...d, rawatib: Math.max(0, (d.rawatib || 0) - 2) };
-                                        updateDayData(selectedDay, { prayers: ps });
-                                    }} className="text-slate-500 active:text-emerald-500 p-0.5"><Minus size={10}/></button>
-                                    <span className="text-[9px] font-black text-emerald-400 min-w-[12px] text-center">{d.rawatib || 0}</span>
-                                    <button onClick={() => {
-                                        const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                        ps[p.id] = { ...d, rawatib: (d.rawatib || 0) + 2 };
-                                        updateDayData(selectedDay, { prayers: ps });
-                                    }} className="text-slate-500 active:text-emerald-500 p-0.5"><Plus size={10}/></button>
-                                </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5">
-                            {profile?.gender === 'male' ? (
-                              <>
-                                <button 
-                                  onClick={() => {
-                                    const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                    ps[p.id] = { ...d, masjid: !d.masjid };
-                                    updateDayData(selectedDay, { prayers: ps });
-                                  }}
-                                  className={`p-2 rounded-lg border transition-all ${d.masjid ? 'bg-blue-500 border-blue-400 text-white' : 'bg-slate-950/40 border-white/5 text-slate-700'}`}
-                                >
-                                  <Building2 size={14} />
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                    ps[p.id] = { ...d, group: !d.group };
-                                    updateDayData(selectedDay, { prayers: ps });
-                                  }}
-                                  className={`p-2 rounded-lg border transition-all ${d.group ? 'bg-purple-500 border-purple-400 text-white' : 'bg-slate-950/40 border-white/5 text-slate-700'}`}
-                                >
-                                  <Users size={14} />
-                                </button>
-                              </>
-                            ) : (
-                              <button 
-                                onClick={() => {
-                                  const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                  ps[p.id] = { ...d, group: !d.group };
-                                  updateDayData(selectedDay, { prayers: ps });
-                                }}
-                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${d.group ? 'bg-purple-500 border-purple-400 text-white' : 'bg-slate-950/40 border-white/5 text-slate-700'}`}
-                              >
-                                <Users size={14} />
-                                <span className="text-[8px] font-black uppercase">Group</span>
-                              </button>
-                            )}
-                          </div>
-                      </div>
+            {PRAYERS.map(p => {
+              const d = currentDayData.prayers?.[p.id] || INITIAL_DAY_DATA.prayers[p.id];
+              return (
+                <div key={p.id} className="bg-slate-900/50 border border-white/5 rounded-[20px] p-3 flex items-center justify-between">
+                  <button 
+                    onClick={() => {
+                      const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
+                      ps[p.id] = { ...d, completed: !d.completed };
+                      updateDayData(selectedDay, { prayers: ps });
+                    }} 
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${d.completed ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-700'}`}
+                  >
+                    <CheckCircle2 size={20} />
+                  </button>
+                  <div className="flex-1 px-4">
+                    <span className="font-black text-[12px] uppercase">{p.name}</span>
+                    <div className="flex items-center gap-1 mt-1">
+                      <button onClick={() => {
+                        const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
+                        ps[p.id] = { ...d, rawatib: Math.max(0, (d.rawatib || 0) - 2) };
+                        updateDayData(selectedDay, { prayers: ps });
+                      }}><Minus size={10} /></button>
+                      <span className="text-[10px] font-black">{d.rawatib || 0}</span>
+                      <button onClick={() => {
+                        const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
+                        ps[p.id] = { ...d, rawatib: (d.rawatib || 0) + 2 };
+                        updateDayData(selectedDay, { prayers: ps });
+                      }}><Plus size={10} /></button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="text-[9px] font-black uppercase text-slate-600 tracking-widest pl-2">Daily Surah (50pts each)</h3>
-              <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: 'surahYaseen', label: 'Yaseen' },
-                    { id: 'surahWaqiya', label: 'Waqiya' },
-                    { id: 'surahMulk', label: 'Mulk' }
-                  ].map(s => (
-                    <button 
-                      key={s.id}
-                      onClick={() => updateDayData(selectedDay, { [s.id]: !currentDayData[s.id] })}
-                      className={`flex flex-col items-center justify-center p-3 rounded-2xl border transition-all ${currentDayData[s.id] ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-900 border-white/5 text-slate-600'}`}
-                    >
-                      <ScrollText size={16} className="mb-1"/>
-                      <span className="text-[9px] font-black uppercase">{s.label}</span>
-                    </button>
-                  ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-slate-900 p-3 rounded-[24px] border border-white/5">
-                 <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest block mb-2">Juz Completed</span>
-                 <div className="flex items-center justify-between bg-slate-950/50 p-1.5 rounded-xl">
-                    <button onClick={() => updateDayData(selectedDay, { quranJuz: Math.max(0, (currentDayData.quranJuz || 0) - 1) })} className="w-8 h-8 flex items-center justify-center bg-slate-800 rounded-lg"><Minus size={12}/></button>
-                    <span className="font-black text-lg">{currentDayData.quranJuz || 0}</span>
-                    <button onClick={() => updateDayData(selectedDay, { quranJuz: (currentDayData.quranJuz || 0) + 1 })} className="w-8 h-8 flex items-center justify-center bg-emerald-500 text-slate-950 rounded-lg"><Plus size={12}/></button>
-                 </div>
-              </div>
-              <div className="bg-slate-900 p-3 rounded-[24px] border border-white/5">
-                 <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest block mb-2">Tahajjud Rakah</span>
-                 <div className="flex items-center justify-between bg-slate-950/50 p-1.5 rounded-xl">
-                    <button onClick={() => updateDayData(selectedDay, { tahajjudRakah: Math.max(0, (currentDayData.tahajjudRakah || 0) - 2) })} className="w-8 h-8 flex items-center justify-center bg-slate-800 rounded-lg"><Minus size={12}/></button>
-                    <span className="font-black text-lg">{currentDayData.tahajjudRakah || 0}</span>
-                    <button onClick={() => updateDayData(selectedDay, { tahajjudRakah: (currentDayData.tahajjudRakah || 0) + 2 })} className="w-8 h-8 flex items-center justify-center bg-orange-500 text-slate-950 rounded-lg"><Plus size={12}/></button>
-                 </div>
-              </div>
-            </div>
-
-            <section className="grid grid-cols-2 gap-2">
-               {[
-                 { id: 'taraweehCompleted', label: 'Taraweeh', icon: <Moon size={12}/> },
-                 { id: 'witrCompleted', label: 'Witr', icon: <Star size={12}/> },
-                 { id: 'duhaCompleted', label: 'Duha', icon: <Sun size={12}/> },
-                 { id: 'haddad', label: 'Haddad', icon: <ShieldCheck size={12}/> }
-               ].map(act => (
-                 <button 
-                   key={act.id}
-                   onClick={() => updateDayData(selectedDay, { [act.id]: !currentDayData[act.id] })}
-                   className={`flex items-center gap-3 p-3 rounded-2xl border transition-all ${currentDayData[act.id] ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-900 border-white/5 text-slate-600'}`}
-                 >
-                   {act.icon}
-                   <span className="text-[10px] font-black uppercase tracking-tight">{act.label}</span>
-                 </button>
-               ))}
-            </section>
-
-            <section className="bg-slate-900/30 p-3 rounded-[24px] border border-white/5 space-y-2">
-               <div className="bg-slate-950/50 p-3 rounded-xl flex items-center justify-between border border-white/5">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase tracking-wider">Azkar</span>
-                    <span className="text-[7px] text-slate-600 font-bold tracking-[0.2em]">+50 STEP</span>
+                  <div className="flex gap-1">
+                    {profile.gender === 'male' && (
+                      <button onClick={() => {
+                        const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
+                        ps[p.id] = { ...d, masjid: !d.masjid };
+                        updateDayData(selectedDay, { prayers: ps });
+                      }} className={`p-2 rounded-lg border ${d.masjid ? 'bg-blue-500' : 'bg-slate-950'}`}><Building2 size={14}/></button>
+                    )}
+                    <button onClick={() => {
+                      const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
+                      ps[p.id] = { ...d, group: !d.group };
+                      updateDayData(selectedDay, { prayers: ps });
+                    }} className={`p-2 rounded-lg border ${d.group ? 'bg-purple-500' : 'bg-slate-950'}`}><Users size={14}/></button>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => updateDayData(selectedDay, { azkarCount: Math.max(0, (currentDayData.azkarCount || 0) - 50) })} className="w-8 h-8 flex items-center justify-center bg-slate-800 rounded-lg"><Minus size={12}/></button>
-                    <span className="text-[14px] font-black text-emerald-500 min-w-[3ch] text-center">{currentDayData.azkarCount || 0}</span>
-                    <button onClick={() => updateDayData(selectedDay, { azkarCount: (currentDayData.azkarCount || 0) + 50 })} className="w-8 h-8 flex items-center justify-center bg-emerald-500 text-slate-950 rounded-lg"><Plus size={12}/></button>
-                  </div>
-               </div>
-               <div className="bg-slate-950/50 p-3 rounded-xl flex items-center justify-between border border-white/5">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase tracking-wider">Salawat</span>
-                    <span className="text-[7px] text-slate-600 font-bold tracking-[0.2em]">+50 STEP</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => updateDayData(selectedDay, { salawatCount: Math.max(0, (currentDayData.salawatCount || 0) - 50) })} className="w-8 h-8 flex items-center justify-center bg-slate-800 rounded-lg"><Minus size={12}/></button>
-                    <span className="text-[14px] font-black text-blue-400 min-w-[3ch] text-center">{currentDayData.salawatCount || 0}</span>
-                    <button onClick={() => updateDayData(selectedDay, { salawatCount: (currentDayData.salawatCount || 0) + 50 })} className="w-8 h-8 flex items-center justify-center bg-blue-500 text-white rounded-lg"><Plus size={12}/></button>
-                  </div>
-               </div>
-            </section>
+                </div>
+              );
+            })}
           </div>
         )}
 
         {activeTab === 'dashboard' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
-             <section className="bg-slate-900/40 rounded-[32px] p-6 border border-white/5">
-                <h2 className="text-[10px] font-black text-slate-500 uppercase mb-6 tracking-[0.4em] text-center italic">Personal Map</h2>
-                <div className="grid grid-cols-5 gap-3">
-                  {Array.from({ length: 30 }, (_, i) => {
-                    const day = i + 1;
-                    const score = calculateDayScore(allData[day]);
-                    const scorePercent = (score / DAILY_SCORE_TARGET) * 100;
-                    const isExcellent = scorePercent >= 90;
-
-                    let cellStyle = 'bg-slate-800 text-slate-600 opacity-30';
-                    if (score > 0) {
-                      cellStyle = scorePercent > 80 ? 'bg-emerald-500 text-slate-950 shadow-lg' : 'bg-emerald-900 text-emerald-400';
-                    }
-                    
-                    return (
-                      <div key={i} onClick={() => { setSelectedDay(day); setActiveTab('log'); }} className={`aspect-square rounded-xl flex flex-col items-center justify-center transition-all relative ${cellStyle} ${selectedDay === day ? 'ring-2 ring-white scale-110 opacity-100' : ''}`}>
-                        {isExcellent && <Star size={8} className="absolute top-1 right-1 text-amber-300 fill-amber-300 animate-pulse" />}
-                        <span className="text-xs font-black">{day}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-             </section>
+          <div className="grid grid-cols-5 gap-2 bg-slate-900/40 p-4 rounded-[32px] border border-white/5">
+            {Array.from({ length: 30 }, (_, i) => {
+              const day = i + 1;
+              const score = calculateDayScore(allData[day]);
+              const percent = (score / DAILY_SCORE_TARGET) * 100;
+              return (
+                <button key={day} onClick={() => { setSelectedDay(day); setActiveTab('log'); }} className={`aspect-square rounded-xl flex items-center justify-center font-black text-xs ${score > 0 ? (percent > 80 ? 'bg-emerald-500 text-slate-950' : 'bg-emerald-900') : 'bg-slate-800 text-slate-600 opacity-30'}`}>
+                  {day}
+                </button>
+              );
+            })}
           </div>
         )}
 
         {activeTab === 'insights' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
-             <h2 className="text-[10px] font-black uppercase text-slate-600 tracking-widest pl-2">Overall Progress</h2>
-             <div className="bg-slate-900/60 p-6 rounded-[32px] border border-white/5 space-y-4">
-                <div className="flex justify-between items-end">
-                    <div>
-                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Quran Goal</span>
-                        <h4 className="text-2xl font-black">{totalJuzFinished} / 30</h4>
-                        <p className="text-[9px] text-emerald-500 font-bold uppercase tracking-tighter">Juz Completed</p>
-                    </div>
-                    <BookOpen size={40} className="text-emerald-500 opacity-20" />
-                </div>
-                <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500 transition-all duration-1000" style={{ width: `${juzProgressPercent}%` }} />
-                </div>
+          <div className="space-y-4">
+             <div className="bg-slate-900/60 p-6 rounded-[32px] border border-white/5">
+                <span className="text-[10px] font-black text-slate-500 uppercase">Total Quran Juz</span>
+                <h4 className="text-3xl font-black">{totalJuzFinished} / 30</h4>
              </div>
-
-             <div className="bg-slate-900/40 p-4 rounded-[24px] border border-white/5 h-64">
+             <div className="bg-slate-900/40 p-4 rounded-[24px] border border-white/5 h-48">
                 <ResponsiveContainer width="100%" height="100%">
                    <AreaChart data={Array.from({length: 30}, (_, i) => ({ day: i+1, score: calculateDayScore(allData[i+1]) }))}>
-                      <defs>
-                        <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                      <XAxis dataKey="day" hide />
-                      <YAxis hide domain={[0, DAILY_SCORE_TARGET * 1.2]} />
-                      <Tooltip content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                          return (
-                            <div className="bg-slate-950 border border-white/10 p-2 rounded-lg text-[10px] font-black">
-                              DAY {payload[0].payload.day}: {Math.round(payload[0].value)} pts
-                            </div>
-                          );
-                        }
-                        return null;
-                      }} />
-                      <Area type="monotone" dataKey="score" stroke="#10b981" fillOpacity={1} fill="url(#colorScore)" strokeWidth={3} />
+                      <Area type="monotone" dataKey="score" stroke="#10b981" fill="#10b98133" strokeWidth={3} />
                    </AreaChart>
                 </ResponsiveContainer>
              </div>
@@ -617,12 +397,12 @@ export default function App() {
       <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-slate-900/80 backdrop-blur-3xl border border-white/10 px-4 py-3 flex justify-around items-center z-50 rounded-full shadow-2xl">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Map' },
-            { id: 'log', icon: ClipboardList, label: 'Daily' },
+            { id: 'log', icon: ClipboardList, label: 'Log' },
             { id: 'insights', icon: BarChart3, label: 'Stats' }
           ].map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-1 transition-all ${activeTab === tab.id ? 'text-emerald-500 scale-110' : 'text-slate-500'}`}>
               <tab.icon size={20} />
-              <span className={`text-[8px] font-black uppercase`}>{tab.label}</span>
+              <span className="text-[8px] font-black uppercase">{tab.label}</span>
             </button>
           ))}
       </nav>
