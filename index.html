@@ -1,595 +1,340 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  onAuthStateChanged, 
-  signInWithCustomToken,
-  setPersistence,
-  browserLocalPersistence
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  onSnapshot, 
-  enableIndexedDbPersistence 
-} from 'firebase/firestore';
-import { 
-  AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid 
-} from 'recharts';
-import { 
-  CheckCircle2, ChevronRight, ChevronLeft, Plus, Minus, 
-  Loader2, LayoutDashboard, ClipboardList, 
-  BarChart3, Building2, Users, Star, LogOut, Info
-} from 'lucide-react';
-
-// Environment-safe Firebase Initialization
-const getFirebaseConfig = () => {
-  if (typeof __firebase_config !== 'undefined') {
-    return JSON.parse(__firebase_config);
-  }
-  // Fallback config
-  return {
-    apiKey: "AIzaSyBA-0sR3quTqAdzNNpAK8CCHw19jDi2je4",
-    authDomain: "ramadanapp-13ef8.firebaseapp.com",
-    projectId: "ramadanapp-13ef8",
-    storageBucket: "ramadanapp-13ef8.firebasestorage.app",
-    messagingSenderId: "858912691110",
-    appId: "1:858912691110:web:2e43b35ec9164db2a13567"
-  };
-};
-
-const app = getApps().length > 0 ? getApp() : initializeApp(getFirebaseConfig());
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ramadan-pro-auth-v1';
-
-const QURAN_TOTAL_JUZ = 30;
-const DAILY_SCORE_TARGET = 1500;
-
-const PRAYERS = [
-  { id: 'fajr', name: 'Fajr', target: 2 },
-  { id: 'dhuhr', name: 'Dhuhr', target: 4 },
-  { id: 'asr', name: 'Asr', target: 2 },
-  { id: 'maghrib', name: 'Maghrib', target: 2 },
-  { id: 'isha', name: 'Isha', target: 2 },
-];
-
-const INITIAL_DAY_DATA = {
-  surahWaqiya: false,
-  surahMulk: false,
-  surahYaseen: false,
-  prayers: {
-    fajr: { completed: false, masjid: false, group: false, rawatib: 0 },
-    dhuhr: { completed: false, masjid: false, group: false, rawatib: 0 },
-    asr: { completed: false, masjid: false, group: false, rawatib: 0 },
-    maghrib: { completed: false, masjid: false, group: false, rawatib: 0 },
-    isha: { completed: false, masjid: false, group: false, rawatib: 0 },
-  },
-  tahajjudRakah: 0,
-  taraweehCompleted: false,
-  witrCompleted: false,
-  duhaCompleted: false,
-  quranJuz: 0,
-  sadaqah: false,
-  azkarCount: 0,
-  haddad: false,
-  salawatCount: 0,
-  manualEvaluation: 0,
-  reflections: ""
-};
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [authMode, setAuthMode] = useState('login');
-  const [pinInput, setPinInput] = useState('');
-  const [regName, setRegName] = useState('');
-  const [regGender, setRegGender] = useState('male');
-  const [error, setError] = useState('');
-
-  const [profile, setProfile] = useState(null);
-  const [activeTab, setActiveTab] = useState('log');
-  const [selectedDay, setSelectedDay] = useState(1);
-  const [allData, setAllData] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-
-  // Authentication Setup (Mandatory Rule 3 Implementation)
-  useEffect(() => {
-    let isMounted = true;
-
-    const performAuth = async (retryCount = 0) => {
-      try {
-        await setPersistence(auth, browserLocalPersistence);
-        
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Ramadan Pro Tracker</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font from Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617; /* Slate 950 */
+            margin: 0;
+            -webkit-tap-highlight-color: transparent;
+            color: #f1f5f9;
         }
-      } catch (e) {
-        console.error("Auth attempt failed:", e);
-        if (retryCount < 3 && isMounted) {
-          const delay = Math.pow(2, retryCount) * 1000;
-          setTimeout(() => performAuth(retryCount + 1), delay);
-        } else if (isMounted) {
-          setError("Connection error. Please refresh the page.");
-          setIsAuthLoading(false);
+        #root {
+            min-height: 100vh;
         }
-      }
-    };
-
-    performAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (isMounted) {
-        setUser(u);
-        setIsAuthLoading(false);
-      }
-    });
-
-    return () => { isMounted = false; unsubscribe(); };
-  }, []);
-
-  // Profile Auto-login
-  useEffect(() => {
-    if (!user) return;
-    const savedPin = localStorage.getItem('ramadan_pro_pin');
-    if (savedPin && !profile) {
-      handleLogin(savedPin);
-    } else if (!savedPin) {
-      setLoading(false);
-    }
-  }, [user]);
-
-  // Data Sync (Rule 1: Strict Paths)
-  useEffect(() => {
-    if (!user || !profile?.pin) return;
-
-    const dataRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_logs', `user_${profile.pin}`);
+        /* Custom scrollbar for a premium look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #020617;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+        }
+        /* Animation for smooth transitions */
+        .fade-enter {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        .fade-enter-active {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 300ms, transform 300ms;
+        }
+    </style>
+</head>
+<body>
+    <!-- The React application will be mounted inside this div -->
+    <div id="root"></div>
     
-    const unsubscribeData = onSnapshot(dataRef, (s) => {
-      if (s.exists()) {
-        setAllData(s.data());
-      }
-      setLoading(false);
-    }, (err) => {
-      console.error("Firestore Error:", err);
-      setLoading(false);
-    });
+    <!-- Load React and Babel from CDNs -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-    return () => unsubscribeData();
-  }, [user, profile]);
+    <!-- Load Firebase via Module -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-  const handleRegister = async () => {
-    if (pinInput.length !== 6 || isNaN(pinInput)) {
-      setError('PIN must be 6 digits');
-      return;
-    }
-    if (!regName) {
-      setError('Please enter your name');
-      return;
-    }
-    if (!user) {
-        setError('Authenticating... Please try again in a moment.');
-        return;
-    }
+        // Make Firebase available globally for the Babel script
+        window.FB = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc };
+    </script>
 
-    setLoading(true);
-    try {
-      const pinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', `profile_${pinInput}`);
-      const check = await getDoc(pinDocRef);
-      
-      if (check.exists()) {
-        setError('This PIN is already taken. Try another.');
-        setLoading(false);
-        return;
-      }
+    <!-- Main App Script -->
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
 
-      const newProfile = { name: regName, gender: regGender, pin: pinInput, uid: user.uid };
-      await setDoc(pinDocRef, newProfile);
-      setProfile(newProfile);
-      localStorage.setItem('ramadan_pro_pin', pinInput);
-    } catch (err) {
-      console.error("Registration error:", err);
-      setError('Failed to save profile. Check connection.');
-    } finally {
-      setLoading(false);
-    }
-  };
+        // --- Helper: App Configuration ---
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'ramadan-pro-github';
 
-  const handleLogin = async (providedPin) => {
-    const pinToUse = providedPin || pinInput;
-    if (pinToUse.length !== 6) {
-      setError('Enter 6-digit PIN');
-      return;
-    }
-    if (!user) return;
+        // --- Data Constants ---
+        const DAYS_OF_RAMADAN = 30;
+        const DAILY_TARGET = 2000;
+        const PRAYERS = [
+            { id: 'fajr', name: 'Fajr' },
+            { id: 'dhuhr', name: 'Dhuhr' },
+            { id: 'asr', name: 'Asr' },
+            { id: 'maghrib', name: 'Maghrib' },
+            { id: 'isha', name: 'Isha' },
+        ];
 
-    setLoading(true);
-    try {
-      const pinDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', `profile_${pinToUse}`);
-      const snap = await getDoc(pinDocRef);
-      
-      if (snap.exists()) {
-        setProfile(snap.data());
-        localStorage.setItem('ramadan_pro_pin', pinToUse);
-        setError('');
-      } else {
-        setError('Profile not found.');
-        localStorage.removeItem('ramadan_pro_pin');
-      }
-    } catch (err) {
-      console.error("Login error:", err);
-      setError('Login failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
+        const INITIAL_DAY_DATA = {
+            fasting: true,
+            prayers: {
+                fajr: { completed: false, masjid: false },
+                dhuhr: { completed: false, masjid: false },
+                asr: { completed: false, masjid: false },
+                maghrib: { completed: false, masjid: false },
+                isha: { completed: false, masjid: false },
+            },
+            taraweeh: false,
+            quranPages: 0
+        };
 
-  const handleLogout = () => {
-    localStorage.removeItem('ramadan_pro_pin');
-    setProfile(null);
-    setPinInput('');
-    setAllData({});
-    setError('');
-  };
-
-  const updateDayData = async (day, updates) => {
-    if (!user || !profile) return;
-    setIsSaving(true);
-    
-    const dayExisting = allData[day] || { ...INITIAL_DAY_DATA };
-    const newDayData = { ...dayExisting, ...updates };
-    const newData = { ...allData, [day]: newDayData };
-    
-    // Optimistic update
-    setAllData(newData);
-    
-    try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'user_logs', `user_${profile.pin}`), newData);
-    } catch (err) {
-      console.error("Save Error:", err);
-    } finally {
-      setTimeout(() => setIsSaving(false), 500);
-    }
-  };
-
-  const calculateDayScore = (data) => {
-    if (!data) return 0;
-    let score = 0;
-    
-    // Prayers
-    PRAYERS.forEach(pDef => {
-      const p = (data.prayers && data.prayers[pDef.id]) || INITIAL_DAY_DATA.prayers[pDef.id];
-      if (p.completed) score += 50;
-      score += (p.rawatib || 0) * 10;
-      if (profile?.gender === 'female') {
-        if (p.group) score += 50;
-      } else {
-        if (p.masjid) score += 25;
-        if (p.group) score += 25;
-      }
-    });
-
-    // Surahs
-    if (data.surahWaqiya) score += 50;
-    if (data.surahMulk) score += 50;
-    if (data.surahYaseen) score += 50;
-    
-    // Qiyam / Sunnah
-    score += (data.tahajjudRakah || 0) * 50;
-    if (data.taraweehCompleted) score += 150;
-    if (data.witrCompleted) score += 50;
-    if (data.duhaCompleted) score += 50;
-    if (data.haddad) score += 50;
-    
-    // Quran
-    if (data.quranJuz > 0) score += (data.quranJuz * 100);
-    
-    // Adhkar
-    score += (data.azkarCount || 0) * 0.5;
-    score += (data.salawatCount || 0) * 0.2;
-    
-    return score;
-  };
-
-  const currentDayData = allData[selectedDay] || INITIAL_DAY_DATA;
-  const currentDayScore = useMemo(() => calculateDayScore(currentDayData), [currentDayData, profile]);
-  
-  const totalJuzFinished = useMemo(() => {
-    return Object.values(allData).reduce((acc, curr) => acc + (Number(curr.quranJuz) || 0), 0);
-  }, [allData]);
-
-  const scoreProgressPercent = Math.min(100, (currentDayScore / DAILY_SCORE_TARGET) * 100);
-
-  if (isAuthLoading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4">
-        <Loader2 size={40} className="animate-spin text-emerald-500 opacity-50" />
-        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Connecting to Heaven...</p>
-      </div>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center px-6">
-        <div className="w-full max-w-sm space-y-8">
-          <div className="text-center">
-            <h1 className="text-4xl font-black italic tracking-tighter mb-2">RAMADAN <span className="text-emerald-500">PRO</span></h1>
-            <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.3em]">Spiritual Growth Tracker</p>
-          </div>
-          
-          <div className="bg-slate-900/50 border border-white/5 p-6 rounded-[32px] space-y-4">
-            <div className="flex bg-slate-950 p-1 rounded-2xl border border-white/5">
-              <button 
-                onClick={() => { setAuthMode('login'); setError(''); }} 
-                className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${authMode === 'login' ? 'bg-emerald-500 text-slate-950 shadow-lg' : 'text-slate-500'}`}
-              >Login</button>
-              <button 
-                onClick={() => { setAuthMode('register'); setError(''); }} 
-                className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${authMode === 'register' ? 'bg-emerald-500 text-slate-950 shadow-lg' : 'text-slate-500'}`}
-              >Register</button>
+        // --- UI Components ---
+        const Card = ({ children, className = "" }) => (
+            <div className={`bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden backdrop-blur-sm ${className}`}>
+                {children}
             </div>
+        );
 
-            {authMode === 'register' && (
-              <div className="space-y-3">
-                <input 
-                  type="text" 
-                  placeholder="Full Name" 
-                  className="w-full bg-slate-950 border border-white/5 rounded-2xl py-3 px-4 text-sm focus:border-emerald-500/50 outline-none transition-all" 
-                  value={regName} 
-                  onChange={e => setRegName(e.target.value)} 
-                />
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => setRegGender('male')} 
-                    className={`flex-1 py-3 rounded-2xl border text-[10px] font-black uppercase transition-all ${regGender === 'male' ? 'bg-blue-600 border-blue-400' : 'bg-slate-950 border-white/5 text-slate-600'}`}
-                  >Male</button>
-                  <button 
-                    onClick={() => setRegGender('female')} 
-                    className={`flex-1 py-3 rounded-2xl border text-[10px] font-black uppercase transition-all ${regGender === 'female' ? 'bg-pink-600 border-pink-400' : 'bg-slate-950 border-white/5 text-slate-600'}`}
-                  >Female</button>
-                </div>
-              </div>
-            )}
+        const Icon = ({ name, size = 20, className = "" }) => {
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            });
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
 
-            <div className="space-y-1">
-                <input 
-                type="password" 
-                inputMode="numeric"
-                placeholder="6-Digit PIN" 
-                className="w-full bg-slate-950 border border-white/5 rounded-2xl py-3 px-4 text-sm tracking-[1em] text-center focus:border-emerald-500/50 outline-none transition-all" 
-                value={pinInput} 
-                maxLength={6}
-                onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))} 
-                />
-            </div>
+        // --- Main App Component ---
+        function App() {
+            const [user, setUser] = useState(null);
+            const [profile, setProfile] = useState(null);
+            const [allData, setAllData] = useState({});
+            const [selectedDay, setSelectedDay] = useState(1);
+            const [activeTab, setActiveTab] = useState('log');
+            const [loading, setLoading] = useState(true);
+            const [isSaving, setIsSaving] = useState(false);
 
-            {error && <p className="text-red-500 text-[10px] font-bold text-center uppercase tracking-wider bg-red-500/10 py-2 rounded-lg">{error}</p>}
-            
-            <button 
-              onClick={authMode === 'login' ? () => handleLogin() : handleRegister} 
-              className="w-full bg-emerald-500 text-slate-950 py-4 rounded-2xl font-black uppercase text-xs shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
-            >
-              {authMode === 'login' ? 'Access Profile' : 'Start Journey'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+            // 1. Initialize Firebase Auth
+            useEffect(() => {
+                if (!window.FB || !firebaseConfig.apiKey) {
+                    setLoading(false);
+                    return;
+                }
+                const auth = window.FB.getAuth(window.FB.initializeApp(firebaseConfig));
+                
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await window.FB.signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await window.FB.signInAnonymously(auth);
+                    }
+                };
+                initAuth();
 
-  return (
-    <div className="min-h-[100dvh] bg-slate-950 text-slate-100 pb-32 overflow-x-hidden">
-      <header className="px-5 py-4 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-xl z-50 border-b border-white/5">
-        <div>
-          <h1 className="text-lg font-black italic uppercase tracking-tighter">{profile.name} <span className="text-emerald-500">PRO</span></h1>
-          <div className="flex items-center gap-2">
-            <span className={`w-1.5 h-1.5 rounded-full ${isSaving ? 'bg-orange-500 animate-pulse' : 'bg-emerald-500'}`} />
-            <button onClick={handleLogout} className="text-[9px] text-slate-500 font-black uppercase hover:text-red-500 transition-colors">Logout</button>
-          </div>
-        </div>
-        <div className="bg-slate-900 border border-white/10 px-4 py-2 rounded-2xl flex items-center gap-2 shadow-inner">
-            <Star size={12} className="text-emerald-500 fill-emerald-500" />
-            <span className="text-[10px] font-black uppercase">{Math.round(currentDayScore)} PTS</span>
-        </div>
-      </header>
+                const unsubscribe = window.FB.onAuthStateChanged(auth, (u) => {
+                    setUser(u);
+                });
+                return () => unsubscribe();
+            }, []);
 
-      <main className="px-4 py-4 max-w-md mx-auto space-y-4">
-        {activeTab === 'log' && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            <section className="bg-slate-900/40 p-4 rounded-[28px] border border-white/5 space-y-3 shadow-xl">
-                <div className="flex justify-between items-center text-[10px] font-black uppercase text-slate-500">
-                    <span className="flex items-center gap-1.5"><Star size={10} /> Daily Goal Progress</span>
-                    <span className="text-emerald-500">{Math.round(currentDayScore)} / {DAILY_SCORE_TARGET}</span>
-                </div>
-                <div className="h-2.5 w-full bg-slate-800/50 rounded-full overflow-hidden p-0.5">
-                    <div className="h-full bg-emerald-500 rounded-full shadow-[0_0_12px_rgba(16,185,129,0.5)] transition-all duration-1000" style={{ width: `${scoreProgressPercent}%` }} />
-                </div>
-            </section>
+            // 2. Fetch User Data
+            useEffect(() => {
+                if (!user || !window.FB) return;
+                const db = window.FB.getFirestore();
+                
+                // Fetch Profile
+                const profileRef = window.FB.doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile');
+                const unsubProfile = window.FB.onSnapshot(profileRef, (snap) => {
+                    if (snap.exists()) setProfile(snap.data());
+                    else setProfile({ name: 'User', gender: 'male' });
+                });
 
-            <div className="flex items-center justify-between bg-slate-900/40 p-2 rounded-2xl border border-white/5 shadow-lg">
-                <button onClick={() => setSelectedDay(d => Math.max(1, d-1))} className="p-2.5 bg-slate-800/50 rounded-xl active:scale-90 transition-transform"><ChevronLeft size={18} /></button>
-                <div className="text-center">
-                    <span className="block text-[10px] text-slate-500 font-bold uppercase tracking-widest">Ramadan</span>
-                    <span className="text-[16px] font-black italic uppercase">Day {selectedDay}</span>
-                </div>
-                <button onClick={() => setSelectedDay(d => Math.min(30, d+1))} className="p-2.5 bg-slate-800/50 rounded-xl active:scale-90 transition-transform"><ChevronRight size={18} /></button>
-            </div>
+                // Fetch Main Data
+                const dataRef = window.FB.doc(db, 'artifacts', appId, 'users', user.uid, 'ramadanData', 'main');
+                const unsubData = window.FB.onSnapshot(dataRef, (snap) => {
+                    if (snap.exists()) setAllData(snap.data());
+                    setLoading(false);
+                }, () => setLoading(false));
 
-            <div className="space-y-3">
-                <h3 className="text-[10px] font-black uppercase text-slate-500 ml-2 tracking-widest">Salah Logs</h3>
-                {PRAYERS.map(p => {
-                    const d = currentDayData.prayers?.[p.id] || INITIAL_DAY_DATA.prayers[p.id];
-                    return (
-                        <div key={p.id} className="bg-slate-900/50 border border-white/5 rounded-[24px] p-3 flex items-center justify-between group hover:border-emerald-500/20 transition-all">
-                            <button 
-                                onClick={() => {
-                                    const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                    ps[p.id] = { ...d, completed: !d.completed };
-                                    updateDayData(selectedDay, { prayers: ps });
-                                }} 
-                                className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${d.completed ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/30' : 'bg-slate-800 text-slate-700'}`}
-                            >
-                                <CheckCircle2 size={24} />
-                            </button>
-                            
-                            <div className="flex-1 px-4">
-                                <span className="font-black text-[13px] uppercase tracking-tight">{p.name}</span>
-                                <div className="flex items-center gap-3 mt-1.5">
-                                    <span className="text-[9px] font-bold text-slate-500 uppercase">Sunnah:</span>
-                                    <div className="flex items-center gap-2">
-                                        <button onClick={() => {
-                                            const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                            ps[p.id] = { ...d, rawatib: Math.max(0, (d.rawatib || 0) - 2) };
-                                            updateDayData(selectedDay, { prayers: ps });
-                                        }} className="w-5 h-5 flex items-center justify-center bg-slate-800 rounded-md active:bg-slate-700 transition-colors"><Minus size={10} /></button>
-                                        <span className={`text-[11px] font-black w-3 text-center ${d.rawatib > 0 ? 'text-emerald-400' : 'text-slate-600'}`}>{d.rawatib || 0}</span>
-                                        <button onClick={() => {
-                                            const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                            ps[p.id] = { ...d, rawatib: (d.rawatib || 0) + 2 };
-                                            updateDayData(selectedDay, { prayers: ps });
-                                        }} className="w-5 h-5 flex items-center justify-center bg-slate-800 rounded-md active:bg-slate-700 transition-colors"><Plus size={10} /></button>
+                return () => { unsubProfile(); unsubData(); };
+            }, [user]);
+
+            // 3. Update Logic
+            const updateDay = async (day, updates) => {
+                const dayData = allData[day] || { ...INITIAL_DAY_DATA };
+                const updatedDay = { ...dayData, ...updates };
+                const newAllData = { ...allData, [day]: updatedDay };
+                
+                setAllData(newAllData);
+
+                if (user && window.FB) {
+                    setIsSaving(true);
+                    const db = window.FB.getFirestore();
+                    await window.FB.setDoc(window.FB.doc(db, 'artifacts', appId, 'users', user.uid, 'ramadanData', 'main'), newAllData);
+                    setTimeout(() => setIsSaving(false), 500);
+                }
+            };
+
+            const currentDayData = allData[selectedDay] || INITIAL_DAY_DATA;
+
+            // Score Calculation
+            const score = useMemo(() => {
+                let s = 0;
+                const d = currentDayData;
+                Object.values(d.prayers || {}).forEach(p => {
+                    if (p.completed) s += 100;
+                    if (p.masjid) s += 50;
+                });
+                if (d.taraweeh) s += 200;
+                s += (d.quranPages || 0) * 10;
+                return s;
+            }, [currentDayData]);
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-emerald-500 gap-4">
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
+                        <p className="font-bold tracking-widest text-xs uppercase">Initializing Ramadan Pro...</p>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen pb-24 relative">
+                    {/* Header */}
+                    <header className="p-6 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-md z-50">
+                        <div>
+                            <h1 className="text-2xl font-black italic tracking-tighter">RAMADAN <span className="text-emerald-500">PRO</span></h1>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Day {selectedDay} • {profile?.name || 'User'}</p>
+                        </div>
+                        <div className="bg-emerald-500 text-slate-950 px-5 py-2 rounded-2xl shadow-lg shadow-emerald-500/20 text-center">
+                            <div className="text-xl font-black leading-none">{score}</div>
+                            <div className="text-[8px] font-bold uppercase tracking-wider">Points</div>
+                        </div>
+                    </header>
+
+                    <main className="px-6 space-y-6">
+                        {/* Day Selector */}
+                        <div className="flex justify-between items-center bg-slate-900/50 border border-slate-800 p-2 rounded-2xl">
+                            <button onClick={() => setSelectedDay(d => Math.max(1, d - 1))} className="p-3 text-slate-400"><Icon name="chevron-left" /></button>
+                            <span className="font-black text-sm tracking-widest">MARCH / DAY {selectedDay}</span>
+                            <button onClick={() => setSelectedDay(d => Math.min(30, d + 1))} className="p-3 text-slate-400"><Icon name="chevron-right" /></button>
+                        </div>
+
+                        {/* Fasting Card */}
+                        <Card className={`p-5 transition-all duration-300 ${currentDayData.fasting ? 'border-emerald-500/30' : 'border-slate-800'}`}>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${currentDayData.fasting ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-500'}`}>
+                                        <Icon name="moon" />
+                                    </div>
+                                    <div>
+                                        <p className="font-black text-white">Fasting</p>
+                                        <p className="text-xs text-slate-500">Sawm completed today</p>
                                     </div>
                                 </div>
-                            </div>
-
-                            <div className="flex gap-2">
-                                {profile.gender === 'male' && (
-                                    <button onClick={() => {
-                                        const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                        ps[p.id] = { ...d, masjid: !d.masjid };
-                                        updateDayData(selectedDay, { prayers: ps });
-                                    }} className={`p-2.5 rounded-xl border transition-all ${d.masjid ? 'bg-blue-600 border-blue-400 text-white shadow-lg' : 'bg-slate-950 border-white/5 text-slate-700'}`}>
-                                        <Building2 size={16} />
-                                    </button>
-                                )}
-                                <button onClick={() => {
-                                    const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                                    ps[p.id] = { ...d, group: !d.group };
-                                    updateDayData(selectedDay, { prayers: ps });
-                                }} className={`p-2.5 rounded-xl border transition-all ${d.group ? 'bg-purple-600 border-purple-400 text-white shadow-lg' : 'bg-slate-950 border-white/5 text-slate-700'}`}>
-                                    <Users size={16} />
+                                <button 
+                                    onClick={() => updateDay(selectedDay, { fasting: !currentDayData.fasting })}
+                                    className={`w-14 h-8 rounded-full relative transition-all ${currentDayData.fasting ? 'bg-emerald-500' : 'bg-slate-700'}`}
+                                >
+                                    <div className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all ${currentDayData.fasting ? 'left-7' : 'left-1'}`} />
                                 </button>
                             </div>
+                        </Card>
+
+                        {/* Prayers Section */}
+                        <div className="space-y-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1">Daily Prayers (Salah)</p>
+                            <div className="grid gap-3">
+                                {PRAYERS.map(p => {
+                                    const prayers = currentDayData.prayers || {};
+                                    const pData = prayers[p.id] || { completed: false, masjid: false };
+                                    return (
+                                        <div key={p.id} className="bg-slate-900/40 p-4 rounded-3xl border border-slate-800 flex items-center justify-between">
+                                            <div className="flex items-center gap-4">
+                                                <button 
+                                                    onClick={() => {
+                                                        const newP = { ...prayers, [p.id]: { ...pData, completed: !pData.completed } };
+                                                        updateDay(selectedDay, { prayers: newP });
+                                                    }}
+                                                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${pData.completed ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-600'}`}
+                                                >
+                                                    <Icon name="check-circle-2" />
+                                                </button>
+                                                <span className="font-bold">{p.name}</span>
+                                            </div>
+                                            <button 
+                                                onClick={() => {
+                                                    const newP = { ...prayers, [p.id]: { ...pData, masjid: !pData.masjid } };
+                                                    updateDay(selectedDay, { prayers: newP });
+                                                }}
+                                                className={`px-4 py-2 rounded-xl text-[9px] font-black tracking-widest transition-all ${pData.masjid ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'}`}
+                                            >
+                                                MASJID
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
-                    );
-                })}
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-                 <div className="bg-slate-900/50 p-4 rounded-[24px] border border-white/5">
-                    <span className="text-[9px] font-black text-slate-500 uppercase">Quran (Juz)</span>
-                    <div className="flex items-center justify-between mt-2">
-                        <button onClick={() => updateDayData(selectedDay, { quranJuz: Math.max(0, (currentDayData.quranJuz || 0) - 1) })} className="p-2 bg-slate-800 rounded-lg"><Minus size={14} /></button>
-                        <span className="text-xl font-black">{currentDayData.quranJuz || 0}</span>
-                        <button onClick={() => updateDayData(selectedDay, { quranJuz: (currentDayData.quranJuz || 0) + 1 })} className="p-2 bg-emerald-500 text-slate-950 rounded-lg shadow-lg shadow-emerald-500/20"><Plus size={14} /></button>
-                    </div>
-                 </div>
-                 <div className="bg-slate-900/50 p-4 rounded-[24px] border border-white/5">
-                    <span className="text-[9px] font-black text-slate-500 uppercase">Tahajjud (Rakah)</span>
-                    <div className="flex items-center justify-between mt-2">
-                        <button onClick={() => updateDayData(selectedDay, { tahajjudRakah: Math.max(0, (currentDayData.tahajjudRakah || 0) - 2) })} className="p-2 bg-slate-800 rounded-lg"><Minus size={14} /></button>
-                        <span className="text-xl font-black">{currentDayData.tahajjudRakah || 0}</span>
-                        <button onClick={() => updateDayData(selectedDay, { tahajjudRakah: (currentDayData.tahajjudRakah || 0) + 2 })} className="p-2 bg-orange-500 text-slate-950 rounded-lg shadow-lg shadow-orange-500/20"><Plus size={14} /></button>
-                    </div>
-                 </div>
-            </div>
-          </div>
-        )}
+                        {/* Taraweeh & Quran */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <Card 
+                                onClick={() => updateDay(selectedDay, { taraweeh: !currentDayData.taraweeh })}
+                                className={`p-4 cursor-pointer text-center space-y-2 border-2 ${currentDayData.taraweeh ? 'border-emerald-500 bg-emerald-500/10' : 'border-transparent'}`}
+                            >
+                                <Icon name="stars" className="mx-auto text-emerald-500" />
+                                <p className="font-black text-xs uppercase tracking-widest">Taraweeh</p>
+                            </Card>
+                            <Card className="p-4 flex flex-col items-center justify-center gap-2">
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => updateDay(selectedDay, { quranPages: Math.max(0, (currentDayData.quranPages || 0) - 1) })} className="text-slate-500"><Icon name="minus" size={14}/></button>
+                                    <span className="text-xl font-black">{currentDayData.quranPages || 0}</span>
+                                    <button onClick={() => updateDay(selectedDay, { quranPages: (currentDayData.quranPages || 0) + 1 })} className="text-emerald-500"><Icon name="plus" size={14}/></button>
+                                </div>
+                                <p className="text-[8px] font-black uppercase tracking-widest text-slate-500">Quran Pages</p>
+                            </Card>
+                        </div>
+                    </main>
 
-        {activeTab === 'dashboard' && (
-          <div className="grid grid-cols-5 gap-3 bg-slate-900/40 p-5 rounded-[32px] border border-white/5 shadow-2xl animate-in zoom-in-95 duration-300">
-            {Array.from({ length: 30 }, (_, i) => {
-              const day = i + 1;
-              const score = calculateDayScore(allData[day]);
-              const percent = (score / DAILY_SCORE_TARGET) * 100;
-              
-              let cellClass = 'bg-slate-800/40 text-slate-600 opacity-40';
-              if (score > 0) {
-                cellClass = percent > 80 ? 'bg-emerald-500 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-emerald-900/60 text-emerald-400 border-emerald-500/20';
-              }
-              if (selectedDay === day) cellClass += ' ring-2 ring-white scale-105 opacity-100 z-10';
+                    {/* Navigation */}
+                    <nav className="fixed bottom-0 left-0 right-0 p-6 bg-slate-950/80 backdrop-blur-xl border-t border-slate-900 flex justify-around items-center z-50">
+                        <button onClick={() => setActiveTab('log')} className={`flex flex-col items-center gap-1 ${activeTab === 'log' ? 'text-emerald-500' : 'text-slate-600'}`}>
+                            <Icon name="history" />
+                            <span className="text-[8px] font-black uppercase">Tracker</span>
+                        </button>
+                        <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-1 ${activeTab === 'stats' ? 'text-emerald-500' : 'text-slate-600'}`}>
+                            <Icon name="bar-chart-3" />
+                            <span className="text-[8px] font-black uppercase">Stats</span>
+                        </button>
+                    </nav>
 
-              return (
-                <button 
-                  key={day} 
-                  onClick={() => { setSelectedDay(day); setActiveTab('log'); }} 
-                  className={`aspect-square rounded-2xl flex items-center justify-center font-black text-[14px] border transition-all ${cellClass}`}
-                >
-                  {day}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {activeTab === 'insights' && (
-          <div className="space-y-4 animate-in slide-in-from-right-4 duration-500">
-             <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-900/60 p-5 rounded-[28px] border border-white/5">
-                    <span className="text-[10px] font-black text-slate-500 uppercase">Total Quran</span>
-                    <h4 className="text-2xl font-black mt-1">{totalJuzFinished} <span className="text-slate-600 text-sm italic">Juz</span></h4>
+                    {/* Saving Indicator */}
+                    {isSaving && (
+                        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-slate-800 text-emerald-400 px-3 py-1 rounded-full text-[9px] font-bold flex items-center gap-2 animate-bounce z-[60]">
+                            <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></div>
+                            SAVING SYNC...
+                        </div>
+                    )}
                 </div>
-                <div className="bg-slate-900/60 p-5 rounded-[28px] border border-white/5">
-                    <span className="text-[10px] font-black text-slate-500 uppercase">Status</span>
-                    <h4 className="text-2xl font-black mt-1 text-emerald-500">{totalJuzFinished >= 30 ? 'Hafiz' : 'Active'}</h4>
-                </div>
-             </div>
-             
-             <div className="bg-slate-900/40 p-5 rounded-[32px] border border-white/5 h-64 shadow-xl">
-                <h3 className="text-[10px] font-black text-slate-500 uppercase mb-4 text-center tracking-widest">Spiritual Momentum</h3>
-                <ResponsiveContainer width="100%" height="80%">
-                   <AreaChart data={Array.from({length: 30}, (_, i) => ({ day: i+1, score: calculateDayScore(allData[i+1]) }))}>
-                      <defs>
-                        <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #ffffff10', borderRadius: '12px' }}
-                        itemStyle={{ color: '#10b981', fontSize: '12px', fontWeight: 'bold' }}
-                      />
-                      <Area type="monotone" dataKey="score" stroke="#10b981" fillOpacity={1} fill="url(#colorScore)" strokeWidth={3} />
-                   </AreaChart>
-                </ResponsiveContainer>
-             </div>
-             
-             <div className="bg-emerald-500/10 border border-emerald-500/20 p-5 rounded-[28px] flex items-start gap-4">
-                <div className="p-2 bg-emerald-500 rounded-xl text-slate-950"><Info size={20} /></div>
-                <div>
-                    <h5 className="text-xs font-black uppercase text-emerald-500">Pro Tip</h5>
-                    <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">Consistency is better than intensity. Log your prayers immediately to keep the streak alive!</p>
-                </div>
-             </div>
-          </div>
-        )}
-      </main>
+            );
+        }
 
-      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-slate-900/60 backdrop-blur-3xl border border-white/10 px-4 py-3 flex justify-around items-center z-50 rounded-[32px] shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
-          {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Map' },
-            { id: 'log', icon: ClipboardList, label: 'Logs' },
-            { id: 'insights', icon: BarChart3, label: 'Stats' }
-          ].map(tab => (
-            <button 
-              key={tab.id} 
-              onClick={() => setActiveTab(tab.id)} 
-              className={`flex flex-col items-center gap-1.5 transition-all duration-300 relative ${activeTab === tab.id ? 'text-emerald-500 scale-110' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              <tab.icon size={22} strokeWidth={activeTab === tab.id ? 2.5 : 2} />
-              <span className="text-[9px] font-black uppercase tracking-tighter">{tab.label}</span>
-              {activeTab === tab.id && <div className="absolute -bottom-2 w-1 h-1 bg-emerald-500 rounded-full shadow-[0_0_8px_#10b981]" />}
-            </button>
-          ))}
-      </nav>
-    </div>
-  );
-}
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
