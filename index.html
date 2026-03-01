@@ -1,20 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid
-} from 'recharts';
-import { 
-  CheckCircle2, Award, BarChart3, 
-  Moon, Sun, Heart, Cloud, AlertTriangle,
-  ChevronRight, ChevronLeft, Plus, Minus, 
-  History, BookOpen, HandHeart, Sparkles, Zap, Save, Loader2, User, UserCircle2, 
-  Stars, Star, Lock, Info, LayoutDashboard, ClipboardList
+  CheckCircle2, Loader2, ChevronRight, ChevronLeft, Plus, Minus, 
+  LayoutDashboard, ClipboardList, Moon, Sun, Star, Trash2
 } from 'lucide-react';
 
-// --- Constants ---
+// --- Configuration & Defaults ---
 const DAYS_OF_RAMADAN = 30;
 const DAILY_TARGET = 2000; 
-const STORAGE_KEY = 'ramadan_pro_v3_data';
-const PROFILE_KEY = 'ramadan_pro_v3_profile';
+const STORAGE_KEY = 'ramadan_pro_local_v3_data';
+const PROFILE_KEY = 'ramadan_pro_local_v3_profile';
 
 const PRAYERS = [
   { id: 'fajr', name: 'Fajr', target: 2 },
@@ -52,10 +46,9 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState(1);
   const [allData, setAllData] = useState({});
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
-  // 1. Initial Load from LocalStorage
+  // Load data from Local Storage on mount
   useEffect(() => {
     const savedProfile = localStorage.getItem(PROFILE_KEY);
     const savedData = localStorage.getItem(STORAGE_KEY);
@@ -74,6 +67,12 @@ export default function App() {
     setLoading(false);
   }, []);
 
+  // Persistence logic
+  const persistData = (data) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    setAllData(data);
+  };
+
   const saveProfile = (data) => {
     localStorage.setItem(PROFILE_KEY, JSON.stringify(data));
     setProfile(data);
@@ -81,51 +80,38 @@ export default function App() {
   };
 
   const updateDayData = (day, updates) => {
-    setIsSaving(true);
     const dayExisting = allData[day] || { ...INITIAL_DAY_DATA };
     const newDayData = { ...dayExisting, ...updates };
     const newData = { ...allData, [day]: newDayData };
-    
-    setAllData(newData);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newData));
-    
-    // Mimic sync delay for visual feedback
-    setTimeout(() => setIsSaving(false), 300);
+    persistData(newData);
+  };
+
+  const resetAllData = () => {
+    if (window.confirm("Are you sure? This will delete all local progress.")) {
+      localStorage.removeItem(STORAGE_KEY);
+      setAllData({});
+    }
   };
 
   const calculateDayScore = (data) => {
     if (!data) return 0;
     let score = 0;
-    let rawatibChecklist = true;
-
+    
     PRAYERS.forEach(pDef => {
       const p = (data.prayers && data.prayers[pDef.id]) || INITIAL_DAY_DATA.prayers[pDef.id];
       if (p.completed) {
-        score += 10;
-        if (profile.gender === 'female') {
-          if (p.group || p.masjid) score += 100;
-        } else {
-          if (p.group) score += 50;
-          if (p.masjid) score += 50;
-        }
+        score += 50; 
+        if (p.group) score += 50;
+        if (p.masjid) score += 50;
       }
-      if ((p.rawatib || 0) < pDef.target) rawatibChecklist = false;
-      score += (p.rawatib || 0) * 5; 
+      score += (p.rawatib || 0) * 10; 
     });
 
-    if (rawatibChecklist) score += 100;
-    if (data.fasting) score += 50;
-    score += (Math.floor((data.tahajjudRakah || 0) / 2)) * 100;
+    if (data.fasting) score += 100;
+    score += (data.tahajjudRakah || 0) * 50;
     if (data.taraweehCompleted) score += 200;
-    if (data.witrCompleted) score += 50;
-    if (data.duhaCompleted) score += 50;
     if (data.quranJuz > 0) score += (data.quranJuz * 100);
-    score += (data.salawatCount || 0) * 0.2;
-    score += (data.azkarCount || 0) * 1.0; 
-    if (data.haddad) score += 60;
-    if (data.sadaqah) score += 100;
-    score += (data.manualEvaluation || 0);
-
+    
     return score;
   };
 
@@ -133,57 +119,43 @@ export default function App() {
   const currentScore = calculateDayScore(currentDayData);
   const meterPercentage = Math.min(100, (currentScore / DAILY_TARGET) * 100);
 
-  const getProgressColorClass = (pct) => {
-    if (pct < 20) return 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]';
-    if (pct < 40) return 'bg-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.4)]';
-    if (pct < 60) return 'bg-emerald-300 shadow-[0_0_15px_rgba(110,231,183,0.4)]';
-    return 'bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.5)]';
-  };
-
   if (loading) return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-emerald-500 gap-4">
-      <Loader2 size={32} className="animate-spin opacity-50" />
-      <div className="font-bold tracking-widest uppercase text-xs text-slate-500">Initializing...</div>
+    <div className="min-h-screen bg-black flex items-center justify-center">
+      <Loader2 className="animate-spin text-emerald-500" />
     </div>
   );
 
   if (showOnboarding) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-        <div className="w-full max-w-sm space-y-6 bg-slate-900/50 p-6 rounded-[32px] border border-slate-800 backdrop-blur-xl">
-          <div className="text-center space-y-2">
-            <h2 className="text-2xl font-black italic uppercase tracking-tighter">RAMADAN <span className="text-emerald-500">PRO</span></h2>
-            <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em]">Local Offline Tracker</p>
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
+        <div className="w-full max-w-sm space-y-8 bg-slate-900/50 p-8 rounded-[40px] border border-slate-800 backdrop-blur-2xl text-center">
+          <div className="space-y-2">
+            <h2 className="text-3xl font-black italic tracking-tighter">RAMADAN <span className="text-emerald-500">PRO</span></h2>
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.3em]">Local Storage Edition</p>
           </div>
           <div className="space-y-4">
             <input 
               type="text" 
-              placeholder="Name"
-              className="w-full bg-slate-800 border-2 border-slate-700 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-emerald-500 transition-colors"
+              placeholder="Your Name"
+              className="w-full bg-slate-800 border-2 border-slate-700 rounded-2xl px-5 py-4 text-sm font-bold outline-none focus:border-emerald-500 transition-all"
               value={profile.name}
               onChange={(e) => setProfile({ ...profile, name: e.target.value })}
             />
             <div className="grid grid-cols-2 gap-3">
               <button 
                 onClick={() => setProfile({ ...profile, gender: 'male' })}
-                className={`py-3 rounded-xl border-2 font-black text-[10px] uppercase tracking-widest transition-all ${profile.gender === 'male' ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-              >
-                Brother
-              </button>
+                className={`py-4 rounded-2xl border-2 font-black text-[10px] uppercase tracking-widest transition-all ${profile.gender === 'male' ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+              >Brother</button>
               <button 
                 onClick={() => setProfile({ ...profile, gender: 'female' })}
-                className={`py-3 rounded-xl border-2 font-black text-[10px] uppercase tracking-widest transition-all ${profile.gender === 'female' ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-              >
-                Sister
-              </button>
+                className={`py-4 rounded-2xl border-2 font-black text-[10px] uppercase tracking-widest transition-all ${profile.gender === 'female' ? 'bg-emerald-500 text-slate-950 border-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+              >Sister</button>
             </div>
             <button 
               disabled={!profile.name || !profile.gender}
               onClick={() => saveProfile(profile)}
-              className="w-full bg-white text-slate-950 font-black py-4 rounded-xl text-xs uppercase tracking-widest disabled:opacity-20 active:scale-95 transition-all mt-4"
-            >
-              Start Journey
-            </button>
+              className="w-full bg-white text-slate-950 font-black py-5 rounded-2xl text-[11px] uppercase tracking-[0.2em] shadow-xl shadow-white/10 disabled:opacity-20 mt-4 active:scale-95 transition-transform"
+            >Enter Oasis</button>
           </div>
         </div>
       </div>
@@ -191,176 +163,173 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-24 safe-top select-none">
-      <header className="px-4 py-3 flex justify-between items-center sticky top-0 bg-slate-950/95 backdrop-blur-lg z-50 border-b border-slate-900">
-        <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-black text-white leading-tight italic">RAMADAN <span className="text-emerald-500">PRO</span></h1>
-          </div>
-          <div className="flex items-center gap-1.5">
-             <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest">Hi, {profile.name.split(' ')[0]}</p>
-             {isSaving ? <Loader2 size={8} className="animate-spin text-emerald-500" /> : <CheckCircle2 size={8} className="text-slate-600" />}
-          </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 pb-24 font-sans select-none">
+      {/* App Header */}
+      <header className="px-6 py-4 flex justify-between items-center sticky top-0 bg-slate-950/80 backdrop-blur-lg z-50 border-b border-slate-900/50">
+        <div>
+          <h1 className="text-xl font-black italic">RAMADAN <span className="text-emerald-500">PRO</span></h1>
+          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+            Offline Mode • {profile.name}
+          </p>
         </div>
-        <div className="bg-emerald-500 px-3 py-1 rounded-full flex flex-col items-center min-w-[80px] shadow-lg shadow-emerald-500/20">
-          <span className="text-[12px] font-black text-slate-950">{Math.floor(currentScore)}</span>
-          <span className="text-[7px] font-bold text-slate-950/60 uppercase leading-none tracking-tighter">Goal {DAILY_TARGET}</span>
+        <div className="bg-emerald-500 text-slate-950 px-4 py-1.5 rounded-full text-center shadow-lg shadow-emerald-500/20">
+          <div className="text-xs font-black">{Math.floor(currentScore)}</div>
+          <div className="text-[7px] font-bold uppercase tracking-tighter opacity-70">Points</div>
         </div>
       </header>
 
-      <main className="px-3 py-4 max-w-md mx-auto space-y-4">
+      <main className="px-4 py-6 max-w-md mx-auto space-y-6">
         {activeTab === 'dashboard' ? (
-          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
-            <div className="bg-slate-900 rounded-3xl p-5 border border-slate-800 flex items-center gap-4">
-                <div className="w-12 h-12 bg-emerald-500 rounded-2xl flex items-center justify-center text-slate-950 font-black text-lg shadow-inner">
-                  {profile.name.charAt(0)}
-                </div>
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-tight">{profile.name}</h3>
-                  <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Local Member • Offline Mode</p>
-                </div>
-            </div>
-
-            <section className="bg-slate-900/40 rounded-3xl p-4 border border-slate-800">
-              <h2 className="text-[9px] font-black text-slate-500 uppercase mb-3 tracking-widest text-center italic">Efficiency Heatmap</h2>
-              <div className="grid grid-cols-6 gap-1.5">
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Heatmap */}
+            <section className="bg-slate-900/50 rounded-[32px] p-6 border border-slate-800/50">
+              <h3 className="text-[10px] font-black uppercase text-slate-500 mb-5 tracking-[0.2em] text-center">30 Day Journey Map</h3>
+              <div className="grid grid-cols-6 gap-2">
                 {Array.from({ length: 30 }, (_, i) => {
                   const day = i + 1;
                   const score = calculateDayScore(allData[day]);
                   const pct = (score / DAILY_TARGET) * 100;
+                  const isActive = selectedDay === day;
                   
-                  let bgColor = "bg-slate-800 text-slate-600";
+                  let cellStyle = "bg-slate-800/50 text-slate-600";
                   if (score > 0) {
-                    if (pct >= 90) bgColor = "bg-emerald-500 text-emerald-950";
-                    else if (pct >= 60) bgColor = "bg-emerald-400 text-emerald-950";
-                    else if (pct >= 20) bgColor = "bg-amber-400 text-amber-950";
-                    else bgColor = "bg-rose-500 text-rose-50";
+                    if (pct >= 80) cellStyle = "bg-emerald-500 text-slate-950";
+                    else if (pct >= 40) cellStyle = "bg-emerald-800 text-emerald-100";
+                    else cellStyle = "bg-emerald-950 text-emerald-500";
                   }
 
                   return (
-                    <div 
-                      key={i} 
+                    <button 
+                      key={day}
                       onClick={() => { setSelectedDay(day); setActiveTab('log'); }}
-                      className={`aspect-square rounded-lg flex items-center justify-center text-[10px] font-black transition-all active:scale-90 cursor-pointer ${bgColor} ${selectedDay === day ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-950' : ''}`}
+                      className={`aspect-square rounded-xl text-[10px] font-black transition-all ${cellStyle} ${isActive ? 'ring-2 ring-white ring-offset-4 ring-offset-slate-950 scale-110' : 'hover:scale-105 active:scale-95'}`}
                     >
                       {day}
-                    </div>
+                    </button>
                   );
                 })}
               </div>
             </section>
+
+            <button 
+              onClick={resetAllData}
+              className="w-full flex items-center justify-center gap-2 py-4 text-slate-600 hover:text-rose-500 transition-colors text-[10px] font-black uppercase tracking-widest"
+            >
+              <Trash2 size={14} /> Reset Local Data
+            </button>
           </div>
         ) : (
-          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
-            <div className="flex items-center justify-between bg-slate-900 rounded-2xl p-1 px-3 border border-slate-800">
-               <button onClick={() => setSelectedDay(d => Math.max(1, d-1))} className="p-2 text-slate-400 active:text-emerald-500 transition-colors"><ChevronLeft size={16} /></button>
-               <span className="font-black text-[9px] uppercase tracking-widest">Ramadan Day {selectedDay}</span>
-               <button onClick={() => setSelectedDay(d => Math.min(30, d+1))} className="p-2 text-slate-400 active:text-emerald-500 transition-colors"><ChevronRight size={16} /></button>
+          <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Day Selector */}
+            <div className="flex items-center justify-between bg-slate-900/50 rounded-2xl p-2 border border-slate-800/50">
+               <button onClick={() => setSelectedDay(d => Math.max(1, d-1))} className="p-3 text-slate-400 hover:text-white"><ChevronLeft size={20}/></button>
+               <div className="flex flex-col items-center">
+                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500">Day</span>
+                 <span className="text-2xl font-black italic">{selectedDay}</span>
+               </div>
+               <button onClick={() => setSelectedDay(d => Math.min(30, d+1))} className="p-3 text-slate-400 hover:text-white"><ChevronRight size={20}/></button>
             </div>
 
-            <section className="bg-slate-900/60 border border-slate-800 rounded-3xl p-4 py-3 space-y-2">
-              <div className="flex justify-between items-end">
-                <h3 className="text-[8px] font-black uppercase text-slate-500 tracking-widest italic">Daily Progress</h3>
-                <span className="text-[10px] font-black text-emerald-400">{Math.round(meterPercentage)}%</span>
+            {/* Progress Meter */}
+            <div className="bg-slate-900 rounded-[24px] p-5 border border-slate-800">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-[9px] font-black uppercase text-slate-500 tracking-widest italic">Day Efficiency</span>
+                <span className="text-xs font-black text-emerald-400">{Math.round(meterPercentage)}%</span>
               </div>
-              <div className="h-3 bg-slate-800 rounded-full overflow-hidden shadow-inner">
+              <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
                 <div 
-                  className={`h-full transition-all duration-700 ease-out ${getProgressColorClass(meterPercentage)}`} 
-                  style={{ width: `${meterPercentage}%` }} 
+                  className="h-full bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)] transition-all duration-700 ease-out"
+                  style={{ width: `${meterPercentage}%` }}
                 />
               </div>
-            </section>
+            </div>
 
-            <section className="space-y-1">
+            {/* Prayer List */}
+            <div className="space-y-2">
               {PRAYERS.map(p => {
                 const d = currentDayData.prayers?.[p.id] || { ...INITIAL_DAY_DATA.prayers[p.id] };
-                const isFardCompleted = d.completed;
                 return (
-                  <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-2 flex items-center gap-2">
-                    <div onClick={() => {
+                  <div key={p.id} className="bg-slate-900/80 border border-slate-800/50 rounded-2xl p-2.5 flex items-center gap-3">
+                    <button 
+                      onClick={() => {
                         const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
                         ps[p.id] = { ...d, completed: !d.completed };
                         updateDayData(selectedDay, { prayers: ps });
-                    }} className={`w-8 h-8 rounded-xl flex items-center justify-center cursor-pointer transition-all ${isFardCompleted ? 'bg-emerald-500 text-slate-950 scale-105 shadow-lg shadow-emerald-500/20' : 'bg-slate-800 text-slate-600 hover:bg-slate-700'}`}>
-                        <CheckCircle2 size={16} />
+                      }}
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${d.completed ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20' : 'bg-slate-800 text-slate-600'}`}
+                    >
+                      <CheckCircle2 size={18} />
+                    </button>
+                    <div className="flex-grow">
+                      <p className={`text-[12px] font-black uppercase ${d.completed ? 'text-white' : 'text-slate-500'}`}>{p.name}</p>
                     </div>
-                    <div className="flex-grow flex items-center justify-between">
-                        <span className={`font-bold text-[11px] ${isFardCompleted ? 'text-white' : 'text-slate-500'}`}>{p.name}</span>
-                        <div className="flex gap-1">
-                          <button 
-                            disabled={!isFardCompleted}
-                            onClick={() => {
-                              const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                              ps[p.id] = { ...d, group: !d.group };
-                              updateDayData(selectedDay, { prayers: ps });
-                            }}
-                            className={`px-3 py-2 rounded-lg text-[8px] font-black transition-all ${!isFardCompleted ? 'opacity-20 pointer-events-none' : ''} ${d.group ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-500'}`}
-                          >GRP</button>
-                          <button 
-                            disabled={!isFardCompleted}
-                            onClick={() => {
-                              const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
-                              ps[p.id] = { ...d, masjid: !d.masjid };
-                              updateDayData(selectedDay, { prayers: ps });
-                            }}
-                            className={`px-3 py-2 rounded-lg text-[8px] font-black transition-all ${!isFardCompleted ? 'opacity-20 pointer-events-none' : ''} ${d.masjid ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500'}`}
-                          >MSJ</button>
-                        </div>
+                    <div className="flex gap-1.5">
+                       <button 
+                        onClick={() => {
+                          const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
+                          ps[p.id] = { ...d, group: !d.group };
+                          updateDayData(selectedDay, { prayers: ps });
+                        }}
+                        className={`px-3 py-2 rounded-lg text-[8px] font-black transition-all ${d.group ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-500'}`}
+                       >GRP</button>
+                       <button 
+                        onClick={() => {
+                          const ps = { ...(currentDayData.prayers || INITIAL_DAY_DATA.prayers) };
+                          ps[p.id] = { ...d, masjid: !d.masjid };
+                          updateDayData(selectedDay, { prayers: ps });
+                        }}
+                        className={`px-3 py-2 rounded-lg text-[8px] font-black transition-all ${d.masjid ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500'}`}
+                       >MSJ</button>
                     </div>
                   </div>
                 );
               })}
-            </section>
+            </div>
 
-            <section className="bg-indigo-950/30 border border-indigo-500/30 rounded-2xl p-4 flex items-center justify-between">
-                <div className="flex flex-col">
-                    <span className="text-[11px] font-black uppercase text-indigo-200">Tahajjud (Qiyam)</span>
-                    <span className="text-[7px] font-bold text-indigo-400 uppercase tracking-widest">100 pts / 2 Rak</span>
+            {/* Quran Section */}
+            <div className="bg-emerald-950/20 border border-emerald-500/20 rounded-[24px] p-5 flex items-center justify-between">
+                <div>
+                  <h4 className="text-[11px] font-black uppercase text-emerald-200">Quran Reading</h4>
+                  <p className="text-[8px] font-bold text-emerald-500/60 uppercase">Juz Completed</p>
                 </div>
-                <div className="flex items-center gap-4 bg-slate-900/50 p-1 rounded-xl border border-white/5">
-                    <button onClick={() => updateDayData(selectedDay, { tahajjudRakah: Math.max(0, (currentDayData.tahajjudRakah || 0) - 2) })} className="p-2 hover:text-white transition-colors"><Minus size={14}/></button>
-                    <span className="font-mono font-black text-indigo-400 text-lg">{currentDayData.tahajjudRakah || 0}</span>
-                    <button onClick={() => updateDayData(selectedDay, { tahajjudRakah: (currentDayData.tahajjudRakah || 0) + 2 })} className="p-2 hover:text-white transition-colors"><Plus size={14}/></button>
+                <div className="flex items-center gap-5 bg-slate-900 p-1.5 rounded-xl border border-white/5">
+                  <button onClick={() => updateDayData(selectedDay, { quranJuz: Math.max(0, (currentDayData.quranJuz || 0) - 1) })} className="p-2 text-slate-400 hover:text-white"><Minus size={18}/></button>
+                  <span className="text-xl font-black text-emerald-400 font-mono w-6 text-center">{currentDayData.quranJuz || 0}</span>
+                  <button onClick={() => updateDayData(selectedDay, { quranJuz: (currentDayData.quranJuz || 0) + 1 })} className="p-2 text-slate-400 hover:text-white"><Plus size={18}/></button>
                 </div>
-            </section>
+            </div>
 
-            <section className="bg-slate-900 rounded-2xl p-4 border border-slate-800 flex items-center justify-between">
-                <span className="text-[11px] font-black uppercase tracking-widest">Quran Juz</span>
-                <div className="flex items-center gap-6">
-                    <button onClick={() => updateDayData(selectedDay, { quranJuz: Math.max(0, (currentDayData.quranJuz || 0) - 1) })} className="p-3 bg-slate-800 rounded-2xl border border-slate-700 active:scale-95 transition-all"><Minus size={18}/></button>
-                    <span className="font-mono font-black text-emerald-400 text-2xl">{currentDayData.quranJuz || 0}</span>
-                    <button onClick={() => updateDayData(selectedDay, { quranJuz: (currentDayData.quranJuz || 0) + 1 })} className="p-3 bg-slate-800 rounded-2xl border border-slate-700 active:scale-95 transition-all"><Plus size={18}/></button>
-                </div>
-            </section>
-
-            <section className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4">
-                <h3 className="text-[9px] font-black uppercase text-slate-500 mb-2 tracking-widest">Daily Reflections</h3>
+            {/* Reflection Area */}
+            <div className="space-y-2">
+                <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest px-2 italic">Reflections & Duas</label>
                 <textarea 
-                  className="w-full bg-slate-800 border-none rounded-xl p-3 text-[11px] text-slate-200 outline-none min-h-[80px] focus:ring-1 focus:ring-emerald-500/50 transition-all"
-                  placeholder="Record your spiritual insights..."
                   value={currentDayData.reflections || ""}
                   onChange={(e) => updateDayData(selectedDay, { reflections: e.target.value })}
+                  placeholder="The spiritual highlights of my day..."
+                  className="w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 text-xs text-slate-300 outline-none focus:ring-1 focus:ring-emerald-500/50 min-h-[100px] resize-none"
                 />
-            </section>
+            </div>
           </div>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-slate-950/80 backdrop-blur-xl border-t border-slate-800 px-6 py-3 flex justify-around items-center z-50">
-          <button 
-            onClick={() => setActiveTab('dashboard')}
-            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'dashboard' ? 'text-emerald-500 scale-110' : 'text-slate-500'}`}
-          >
-            <LayoutDashboard size={20} />
-            <span className="text-[8px] font-black uppercase tracking-tighter">Stats</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('log')}
-            className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'log' ? 'text-emerald-500 scale-110' : 'text-slate-500'}`}
-          >
-            <ClipboardList size={20} />
-            <span className="text-[8px] font-black uppercase tracking-tighter">Checklist</span>
-          </button>
+      {/* Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-slate-950/80 backdrop-blur-2xl border-t border-slate-900 px-8 py-4 flex justify-around items-center z-50">
+        <button 
+          onClick={() => setActiveTab('dashboard')}
+          className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'dashboard' ? 'text-emerald-500 scale-110' : 'text-slate-500'}`}
+        >
+          <LayoutDashboard size={22} />
+          <span className="text-[8px] font-black uppercase tracking-tighter">Stats</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('log')}
+          className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'log' ? 'text-emerald-500 scale-110' : 'text-slate-500'}`}
+        >
+          <ClipboardList size={22} />
+          <span className="text-[8px] font-black uppercase tracking-tighter">Journal</span>
+        </button>
       </nav>
     </div>
   );
